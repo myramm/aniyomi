@@ -53,15 +53,8 @@ fun TabbedScreen(
                 val tab = tabs[state.currentPage]
                 val searchEnabled = tab.searchEnabled
 
-                val actualQuery = when (state.currentPage % 2) {
-                    1 -> mangaSearchQuery // History and Browse
-                    else -> animeSearchQuery
-                }
-
-                val actualOnChange = when (state.currentPage % 2) {
-                    1 -> onChangeMangaSearchQuery // History and Browse
-                    else -> onChangeAnimeSearchQuery
-                }
+                val actualQuery = animeSearchQuery ?: mangaSearchQuery
+                val actualOnChange = if (animeSearchQuery != null) onChangeAnimeSearchQuery else onChangeMangaSearchQuery
 
                 SearchToolbar(
                     titleContent = {
@@ -89,22 +82,24 @@ fun TabbedScreen(
                 end = contentPadding.calculateEndPadding(LocalLayoutDirection.current),
             ),
         ) {
-            FlexibleTabRow(
-                scrollable = scrollable,
-                selectedTabIndex = state.currentPage,
-            ) {
-                tabs.forEachIndexed { index, tab ->
-                    Tab(
-                        selected = state.currentPage == index,
-                        onClick = { scope.launch { state.animateScrollToPage(index) } },
-                        text = {
-                            TabText(
-                                text = stringResource(tab.titleRes),
-                                badgeCount = tab.badgeNumber,
-                            )
-                        },
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurface,
-                    )
+            if (tabs.size > 1) {
+                FlexibleTabRow(
+                    scrollable = scrollable,
+                    selectedTabIndex = state.currentPage,
+                ) {
+                    tabs.forEachIndexed { index, tab ->
+                        Tab(
+                            selected = state.currentPage == index,
+                            onClick = { scope.launch { state.animateScrollToPage(index) } },
+                            text = {
+                                TabText(
+                                    text = stringResource(tab.titleRes),
+                                    badgeCount = tab.badgeNumber,
+                                )
+                            },
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
             }
 

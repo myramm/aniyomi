@@ -41,15 +41,12 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.ui.browse.BrowseTab
 import eu.kanade.tachiyomi.ui.download.DownloadsTab
 import eu.kanade.tachiyomi.ui.entries.anime.AnimeScreen
-import eu.kanade.tachiyomi.ui.entries.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.history.HistoriesTab
 import eu.kanade.tachiyomi.ui.library.anime.AnimeLibraryTab
-import eu.kanade.tachiyomi.ui.library.manga.MangaLibraryTab
 import eu.kanade.tachiyomi.ui.more.MoreTab
 import eu.kanade.tachiyomi.ui.updates.UpdatesTab
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import soup.compose.material.motion.animation.materialFadeThroughIn
@@ -76,7 +73,7 @@ object HomeScreen : Screen() {
 
     private val uiPreferences: UiPreferences by injectLazy()
     private val defaultTab = uiPreferences.startScreen().get().tab
-    private val moreTab = uiPreferences.navStyle().get().moreTab
+    private val moreTab = MoreTab
 
     @Composable
     override fun Content() {
@@ -104,7 +101,7 @@ object HomeScreen : Screen() {
                                 showBottomNavEvent.receiveAsFlow().collectLatest { value = it }
                             }
                             AnimatedVisibility(
-                                visible = bottomNavVisible && tabNavigator.current != navStyle.moreTab,
+                                visible = bottomNavVisible && tabNavigator.current != MoreTab,
                                 enter = expandVertically(),
                                 exit = shrinkVertically(),
                             ) {
@@ -143,15 +140,10 @@ object HomeScreen : Screen() {
             }
 
             val goToStartScreen = {
-                if (defaultTab != moreTab) {
-                    tabNavigator.current = defaultTab
-                } else {
-                    tabNavigator.current = AnimeLibraryTab
-                }
+                tabNavigator.current = defaultTab
             }
             BackHandler(
-                enabled = (tabNavigator.current == moreTab || tabNavigator.current != defaultTab) &&
-                    (tabNavigator.current != AnimeLibraryTab || defaultTab != moreTab),
+                enabled = tabNavigator.current != defaultTab,
                 onBack = goToStartScreen,
             )
 
@@ -159,27 +151,19 @@ object HomeScreen : Screen() {
                 launch {
                     librarySearchEvent.receiveAsFlow().collectLatest {
                         goToStartScreen()
-                        when (defaultTab) {
-                            AnimeLibraryTab -> AnimeLibraryTab.search(it)
-                            MangaLibraryTab -> MangaLibraryTab.search(it)
-                            else -> {}
-                        }
+                        AnimeLibraryTab.search(it)
                     }
                 }
                 launch {
                     openTabEvent.receiveAsFlow().collectLatest {
                         tabNavigator.current = when (it) {
                             is Tab.AnimeLib -> AnimeLibraryTab
-                            is Tab.Library -> MangaLibraryTab
+                            is Tab.Library -> AnimeLibraryTab
                             is Tab.Updates -> UpdatesTab
                             is Tab.History -> HistoriesTab
                             is Tab.Browse -> {
                                 if (it.toExtensions) {
-                                    if (!it.anime) {
-                                        BrowseTab.showExtension()
-                                    } else {
-                                        BrowseTab.showAnimeExtension()
-                                    }
+                                    BrowseTab.showAnimeExtension()
                                 }
                                 BrowseTab
                             }
@@ -188,9 +172,6 @@ object HomeScreen : Screen() {
 
                         if (it is Tab.AnimeLib && it.animeIdToOpen != null) {
                             navigator.push(AnimeScreen(it.animeIdToOpen))
-                        }
-                        if (it is Tab.Library && it.mangaIdToOpen != null) {
-                            navigator.push(MangaScreen(it.mangaIdToOpen))
                         }
                         if (it is Tab.More && it.toDownloads) {
                             navigator.push(DownloadsTab)
@@ -265,10 +246,7 @@ object HomeScreen : Screen() {
                     UpdatesTab::class.isInstance(tab) -> {
                         val count by produceState(initialValue = 0) {
                             val pref = Injekt.get<LibraryPreferences>()
-                            combine(
-                                pref.newAnimeUpdatesCount().changes(),
-                                pref.newMangaUpdatesCount().changes(),
-                            ) { countAnime, countManga -> countAnime + countManga }
+                            pref.newAnimeUpdatesCount().changes()
                                 .collectLatest { value = if (pref.newShowUpdatesCount().get()) it else 0 }
                         }
                         if (count > 0) {
@@ -288,10 +266,7 @@ object HomeScreen : Screen() {
                     BrowseTab::class.isInstance(tab) -> {
                         val count by produceState(initialValue = 0) {
                             val pref = Injekt.get<SourcePreferences>()
-                            combine(
-                                pref.mangaExtensionUpdatesCount().changes(),
-                                pref.animeExtensionUpdatesCount().changes(),
-                            ) { extCount, animeExtCount -> extCount + animeExtCount }
+                            pref.animeExtensionUpdatesCount().changes()
                                 .collectLatest { value = it }
                         }
                         if (count > 0) {
