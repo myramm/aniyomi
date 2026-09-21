@@ -159,10 +159,24 @@ jobs:
           echo "$CHECKSUMS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Upload APKs as Artifacts
+      - name: Upload arm64-v8a APK (HP Android 64-bit ~35MB)
         uses: actions/upload-artifact@v4
         with:
-          name: Aniyomi-APKs-${{ env.BUILD_VERSION }}
+          name: Aniyomi-arm64-v8a-${{ env.BUILD_VERSION }}
+          path: dist/*arm64-v8a*.apk
+          retention-days: 30
+
+      - name: Upload Universal APK (Semua Tipe HP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aniyomi-Universal-${{ env.BUILD_VERSION }}
+          path: dist/*universal*.apk
+          retention-days: 30
+
+      - name: Upload All Variants (Semua Varian Bundle)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aniyomi-All-Variants-${{ env.BUILD_VERSION }}
           path: dist/*
           retention-days: 30
 
