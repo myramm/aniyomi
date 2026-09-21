@@ -1,0 +1,193 @@
+name: Build Aniyome APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type (release, preview, debug)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - preview
+          - debug
+      create_release:
+        description: 'Create GitHub Release?'
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Determine Build Task
+        id: determine_build
+        run: |
+          BUILD_TYPE="${{ inputs.build_type || 'release' }}"
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
+            BUILD_TYPE="release"
+          fi
+          
+          if [ "$BUILD_TYPE" = "preview" ]; then
+            echo "GRADLE_TASK=assemblePreview" >> $GITHUB_ENV
+            echo "OUTPUT_DIR=app/build/outputs/apk/preview" >> $GITHUB_ENV
+            echo "FLAVOR_TYPE=preview" >> $GITHUB_ENV
+          elif [ "$BUILD_TYPE" = "debug" ]; then
+            echo "GRADLE_TASK=assembleDebug" >> $GITHUB_ENV
+            echo "OUTPUT_DIR=app/build/outputs/apk/debug" >> $GITHUB_ENV
+            echo "FLAVOR_TYPE=debug" >> $GITHUB_ENV
+          else
+            echo "GRADLE_TASK=assembleRelease" >> $GITHUB_ENV
+            echo "OUTPUT_DIR=app/build/outputs/apk/release" >> $GITHUB_ENV
+            echo "FLAVOR_TYPE=release" >> $GITHUB_ENV
+          fi
+
+      - name: Build with Gradle
+        run: |
+          chmod +x gradlew
+          ./gradlew ${{ env.GRADLE_TASK }} -Penable-updater --no-daemon --stacktrace
+
+      - name: Prepare Signing & Process APKs
+        id: sign_apks
+        run: |
+          mkdir -p dist
+          
+          # Find latest apksigner
+          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
+          echo "Using apksigner at: $APKSIGNER"
+
+          # Get version info
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="$TAG_NAME"
+          else
+            VERSION="git-$SHORT_SHA"
+          fi
+          echo "BUILD_VERSION=$VERSION" >> $GITHUB_ENV
+
+          # Check if custom keystore secret is available
+          if [ -n "${{ secrets.SIGNING_KEY }}" ]; then
+            echo "Using custom signing keystore from secrets..."
+            echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > keystore.jks
+            KS_FILE="keystore.jks"
+            KS_ALIAS="${{ secrets.ALIAS }}"
+            KS_PASS="${{ secrets.KEY_STORE_PASSWORD }}"
+            KEY_PASS="${{ secrets.KEY_PASSWORD }}"
+          else
+            echo "Creating automatic signing keystore..."
+            keytool -genkeypair -v \
+              -keystore auto-release.jks \
+              -alias aniyomi \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Aniyomi, OU=Aniyomi, O=Aniyomi, L=World, S=World, C=ID"
+            KS_FILE="auto-release.jks"
+            KS_ALIAS="aniyomi"
+            KS_PASS="android"
+            KEY_PASS="android"
+          fi
+
+          echo "Processing generated APK files in ${{ env.OUTPUT_DIR }}..."
+          for apk in ${{ env.OUTPUT_DIR }}/*.apk; do
+            [ -f "$apk" ] || continue
+            filename=$(basename "$apk")
+            echo "Found APK: $filename"
+
+            # Normalize output name
+            clean_name=$(echo "$filename" | sed -E 's/app-//g' | sed -E 's/-unsigned//g' | sed -E 's/\.apk//g')
+            target_apk="dist/Aniyomi-${clean_name}-${VERSION}.apk"
+
+            if [[ "$filename" == *"unsigned"* ]]; then
+              echo "Signing $filename -> $target_apk"
+              $APKSIGNER sign --ks "$KS_FILE" \
+                --ks-key-alias "$KS_ALIAS" \
+                --ks-pass "pass:$KS_PASS" \
+                --key-pass "pass:$KEY_PASS" \
+                --out "$target_apk" \
+                "$apk"
+            else
+              echo "Copying already signed $filename -> $target_apk"
+              cp "$apk" "$target_apk"
+            fi
+          done
+
+          # Generate SHA256 checksums
+          cd dist
+          sha256sum *.apk > sha256sums.txt
+          CHECKSUMS=$(cat sha256sums.txt)
+          cd ..
+          
+          # Pass checksums to release body
+          echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
+          echo "$CHECKSUMS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Upload APKs as Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aniyomi-APKs-${{ env.BUILD_VERSION }}
+          path: dist/*
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.create_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', env.BUILD_VERSION) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && format('Aniyomi {0}', github.ref_name) || format('Aniyomi Build {0}', env.BUILD_VERSION) }}
+          body: |
+            ### Aniyomi Build Output
+
+            - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            - **Variant**: `${{ env.FLAVOR_TYPE }}`
+            
+            #### Checksums (SHA-256):
+            ```text
+            ${{ env.CHECKSUMS }}
+            ```
+
+            *Silakan unduh APK sesuai arsitektur CPU HP Anda (atau pilih varian **universal**).*
+          files: |
+            dist/*.apk
+            dist/sha256sums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
