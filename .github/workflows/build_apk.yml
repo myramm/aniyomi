@@ -180,28 +180,32 @@ jobs:
           path: dist/*
           retention-days: 30
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') || inputs.create_release == true
+      - name: Publish to GitHub Releases
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', env.BUILD_VERSION) }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && format('Aniyomi {0}', github.ref_name) || format('Aniyomi Build {0}', env.BUILD_VERSION) }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v0.18.2.1-{0}', env.BUILD_VERSION) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && format('Aniyomi {0}', github.ref_name) || format('Aniyomi Anime-Only ({0})', env.BUILD_VERSION) }}
           body: |
-            ### Aniyomi Build Output
+            ### 🎬 Aniyomi Anime-Only Build
 
             - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
             - **Variant**: `${{ env.FLAVOR_TYPE }}`
             
+            #### 📱 Pilihan Download APK:
+            * **`Aniyomi-arm64-v8a-...apk` (~35 MB)** ➔ Rekomendasi untuk HP Android masa kini (64-bit).
+            * **`Aniyomi-universal-...apk` (~65 MB)** ➔ Untuk semua tipe HP Android.
+            * **`Aniyomi-armeabi-v7a-...apk` (~35 MB)** ➔ Untuk HP Android 32-bit lama.
+
             #### Checksums (SHA-256):
             ```text
             ${{ env.CHECKSUMS }}
             ```
-
-            *Silakan unduh APK sesuai arsitektur CPU HP Anda (atau pilih varian **universal**).*
           files: |
             dist/*.apk
             dist/sha256sums.txt
           draft: false
           prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
